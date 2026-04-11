@@ -1,0 +1,6 @@
+pipecat-ai[google,deepgram,silero,websocket, rtvi, daily, sentence]== 0.0.108
+python-dotenv
+opencv-python-headless
+supabase
+gotrue
+sqlalchemy
