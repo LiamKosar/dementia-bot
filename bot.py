@@ -46,8 +46,8 @@ async def run_bot(room_url: str, token: str, user_id: UUID):
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(
                     confidence=0.65,
-                    start_secs=0.2,
-                    stop_secs=0.2,
+                    start_secs=0.5,
+                    stop_secs=0.5,
                     min_volume=0.01,
                 )
             ),

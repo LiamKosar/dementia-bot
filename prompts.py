@@ -35,3 +35,6 @@ If no alias matches, respond warmly: "Tell me a little more about them — how d
 - When you receive tool results, use them naturally. For example, if lookup_person returns that "Bobby" is the user's grandson who loves baseball, say something like "Oh, Bobby! He loves baseball, doesn't he? What a great kid."
 - NEVER ignore available tools. NEVER fabricate information that a tool could provide.
 """
+
+
+# inject location, time of day, day of week, weather, etc. into the conversation (grounding)
