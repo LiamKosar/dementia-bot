@@ -7,8 +7,8 @@ from pipecat.frames.frames import OutputTransportMessageFrame
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.llm_service import FunctionCallParams
 
-from models import Person
-from queries import list_people, list_people_by_alias
+from models import Person, Patient
+from queries import list_people, list_people_by_alias, get_patient
 from context import session_context
 from loguru import logger
 
@@ -31,10 +31,20 @@ def _lookup_person_schema(people: list[Person]) -> FunctionSchema:
     )
 
 
+def _show_patient_schema() -> FunctionSchema:
+    return FunctionSchema(
+        name="show_patient",
+        description="Use if patient asks about themselves. Show detailed information about the patient, including their date of birth, occupations, nicknames, and other biographical details. Will show a photo of the patient.",
+        properties={},
+        required=[],
+    )
+
+
 def _person_tool_schemas(people: list[Person]) -> list[FunctionSchema]:
     """Build all person-related tool schemas. Each tool decides what it needs from people."""
     return [
         _lookup_person_schema(people),
+        _show_patient_schema(),
     ]
 
 
@@ -81,6 +91,27 @@ async def handle_lookup_person(params: FunctionCallParams):
     await params.result_callback(result)
 
 
+async def handle_show_patient(params: FunctionCallParams):
+    session = session_context.get()
+    if not session:
+        raise RuntimeError("No session context; user_id unavailable")
+
+    logger.info("Showing patient information")
+    patient: Patient | None = get_patient(session.user_id)
+
+    if not patient:
+        result = "No patient information found for this user."
+    else:
+        if patient.photo_url:
+            logger.info(f"Sending patient image via app message: {patient.photo_url}")
+            asyncio.create_task(_send_image_via_app_message(patient.photo_url))
+
+        patient_data = _patient_to_dict(patient)
+        result = json.dumps(patient_data, indent=2)
+
+    await params.result_callback(result)
+
+
 def _person_to_dict(person: Person) -> dict:
     # Handle both enum and string values for relationship
     relationship = person.relationship
@@ -92,4 +123,23 @@ def _person_to_dict(person: Person) -> dict:
         "relationship": str(relationship),
         "aliases": person.aliases or [],
         "notes": person.notes,
+    }
+
+
+def _patient_to_dict(patient: Patient) -> dict:
+    # Handle date_of_birth - Supabase returns it as string, not date object
+    dob = patient.date_of_birth
+    if dob and hasattr(dob, "isoformat"):
+        dob = dob.isoformat()
+
+    return {
+        "full_name": patient.full_name,
+        "nicknames": patient.nicknames or [],
+        "date_of_birth": dob,
+        "birth_location": patient.birth_location,
+        "current_occupation": patient.current_occupation,
+        "past_occupations": patient.past_occupations or [],
+        "gender": patient.gender,
+        "preferred_language": patient.preferred_language,
+        "notes": patient.notes,
     }

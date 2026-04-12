@@ -22,10 +22,12 @@ from pipecat.transports.daily.transport import DailyParams, DailyTransport
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 
 from context import session_context, BotSession
-from prompts import SYSTEM_PROMPT_V1
+from prompts import get_personalized_prompt
+from queries import get_patient
 from tools.person_tools import (
     build_person_tools,
     handle_lookup_person,
+    handle_show_patient,
 )
 from loguru import logger
 from utils import get_async_supabase_client
@@ -47,7 +49,7 @@ async def run_bot(room_url: str, token: str, user_id: UUID):
                 params=VADParams(
                     confidence=0.65,
                     start_secs=0.5,
-                    stop_secs=0.5,
+                    stop_secs=0.2,
                     min_volume=0.01,
                 )
             ),
@@ -57,17 +59,22 @@ async def run_bot(room_url: str, token: str, user_id: UUID):
     # Set session context with transport reference
     session_context.set(BotSession(user_id=user_id, transport=pipecat_transport))
 
+    # Get patient data and generate personalized prompt with grounding context
+    patient = get_patient(user_id)
+    system_prompt = get_personalized_prompt(patient)
+
     llm = GeminiLiveLLMService(
         api_key=os.getenv("GEMINI_API_KEY"),
         settings=GeminiLiveLLMService.Settings(
             model="models/gemini-3.1-flash-live-preview",
-            voice="Vindemiatrix",
-            system_instruction=SYSTEM_PROMPT_V1,
+            voice="Fenrir",
+            system_instruction=system_prompt,
             vad=GeminiVADParams(disabled=True),
         ),
     )
 
     llm.register_function("lookup_person", handle_lookup_person)
+    llm.register_function("show_patient", handle_show_patient)
 
     person_tools = await person_tools
 

@@ -1,3 +1,9 @@
+from datetime import datetime
+from typing import Optional
+from models import Patient
+from utils import get_weather_description
+
+
 SYSTEM_PROMPT_V1 = """You are Memoria, a kind and cheerful companion. You speak in a warm, gentle voice like a trusted friend.
 
 == TOOLS ==
@@ -37,4 +43,62 @@ If no alias matches, respond warmly: "Tell me a little more about them — how d
 """
 
 
-# inject location, time of day, day of week, weather, etc. into the conversation (grounding)
+def get_grounding_context(patient: Optional[Patient] = None) -> str:
+    """
+    Build a grounding context string with current time, date, and weather information.
+    This helps orient the conversation in the present moment.
+    """
+    now = datetime.now()
+
+    # Determine time of day
+    hour = now.hour
+    if 5 <= hour < 12:
+        time_of_day = "morning"
+    elif 12 <= hour < 17:
+        time_of_day = "afternoon"
+    elif 17 <= hour < 21:
+        time_of_day = "evening"
+    else:
+        time_of_day = "night"
+
+    # Get day of week and date
+    day_of_week = now.strftime("%A")
+    date_str = now.strftime("%B %d, %Y")
+
+    # Build the grounding context
+    context_parts = [f"It is currently {time_of_day}, {day_of_week}, {date_str}."]
+
+    # Add weather if patient has a current address
+    if patient and patient.current_address:
+        address = patient.current_address
+        from loguru import logger
+
+        logger.info(f"Address: {address}")
+
+        if address.get("city"):
+            context_parts.append(f"The patient is in {address.get('city')}.")
+        weather = get_weather_description(
+            address.get("city", ""),
+            address.get("state", ""),
+            address.get("country", "US"),
+        )
+        if weather:
+            context_parts.append(f"The weather is {weather}.")
+
+    return " ".join(context_parts)
+
+
+def get_personalized_prompt(patient: Optional[Patient] = None) -> str:
+    """
+    Generate a personalized system prompt with grounding information injected.
+    """
+    grounding = get_grounding_context(patient)
+    from loguru import logger
+
+    logger.info(f"Grounding context: {grounding}")
+
+    # Inject grounding context at the beginning of the conversation rules
+    return SYSTEM_PROMPT_V1.replace(
+        "== CONVERSATION RULES ==",
+        f"== GROUNDING ==\n{grounding}\n\n== CONVERSATION RULES ==",
+    )
