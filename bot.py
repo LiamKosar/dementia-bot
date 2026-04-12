@@ -6,6 +6,7 @@
 import os
 from uuid import UUID
 import asyncio
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import LLMRunFrame
 
 from pipecat.pipeline.pipeline import Pipeline
@@ -16,6 +17,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
 )
 from pipecat.services.google.gemini_live import GeminiLiveLLMService
+from pipecat.services.google.gemini_live.llm import GeminiVADParams
 from pipecat.transports.daily.transport import DailyParams, DailyTransport
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 
@@ -27,6 +29,7 @@ from tools.person_tools import (
 )
 from loguru import logger
 from utils import get_async_supabase_client
+from pipecat.audio.vad.silero import SileroVADAnalyzer
 
 
 async def run_bot(room_url: str, token: str, user_id: UUID):
@@ -39,6 +42,15 @@ async def run_bot(room_url: str, token: str, user_id: UUID):
         params=DailyParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
+            vad_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(
+                params=VADParams(
+                    confidence=0.65,
+                    start_secs=0.2,
+                    stop_secs=0.2,
+                    min_volume=0.01,
+                )
+            ),
         ),
     )
 
@@ -48,9 +60,10 @@ async def run_bot(room_url: str, token: str, user_id: UUID):
     llm = GeminiLiveLLMService(
         api_key=os.getenv("GEMINI_API_KEY"),
         settings=GeminiLiveLLMService.Settings(
-            model="models/gemini-2.5-flash-native-audio-preview-12-2025",
-            voice="Charon",
+            model="models/gemini-3.1-flash-live-preview",
+            voice="Vindemiatrix",
             system_instruction=SYSTEM_PROMPT_V1,
+            vad=GeminiVADParams(disabled=True),
         ),
     )
 
@@ -75,6 +88,7 @@ async def run_bot(room_url: str, token: str, user_id: UUID):
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
+            allow_interruptions=False,
             enable_metrics=True,
             enable_usage_metrics=True,
         ),
