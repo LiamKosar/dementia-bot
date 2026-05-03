@@ -1,5 +1,7 @@
 import asyncio
 import json
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from uuid import UUID
 
 from pipecat.adapters.schemas.function_schema import FunctionSchema
@@ -7,10 +9,13 @@ from pipecat.frames.frames import OutputTransportMessageFrame
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.services.llm_service import FunctionCallParams
 
-from models import Person, Patient
-from queries import list_people, list_people_by_alias, get_patient
+from models import Person, Patient, CalendarEvent
+from queries import list_people, list_people_by_alias, get_patient, get_today_calendar_events
 from context import session_context
 from loguru import logger
+
+# Eastern Time (handles both EST and EDT automatically)
+EASTERN_TZ = ZoneInfo("America/New_York")
 
 
 def _lookup_person_schema(people: list[Person]) -> FunctionSchema:
@@ -40,11 +45,21 @@ def _show_patient_schema() -> FunctionSchema:
     )
 
 
+def _get_today_events_schema() -> FunctionSchema:
+    return FunctionSchema(
+        name="get_today_events",
+        description="Get today's calendar events for the patient. Shows all appointments, medications, activities, reminders, meals, and visits scheduled for today, along with the current time to help determine what's happening now.",
+        properties={},
+        required=[],
+    )
+
+
 def _person_tool_schemas(people: list[Person]) -> list[FunctionSchema]:
     """Build all person-related tool schemas. Each tool decides what it needs from people."""
     return [
         _lookup_person_schema(people),
         _show_patient_schema(),
+        _get_today_events_schema(),
     ]
 
 
@@ -112,6 +127,51 @@ async def handle_show_patient(params: FunctionCallParams):
     await params.result_callback(result)
 
 
+async def handle_get_today_events(params: FunctionCallParams):
+    session = session_context.get()
+    if not session:
+        raise RuntimeError("No session context; user_id unavailable")
+
+    logger.info("Getting today's calendar events")
+    events: list[CalendarEvent] = get_today_calendar_events(session.user_id)
+
+    # Get the current time in Eastern Time
+    current_time = datetime.now(EASTERN_TZ)
+
+    if not events:
+        result = f"No events scheduled for today. Current time: {current_time.strftime('%I:%M %p')} EST"
+    else:
+        events_data = []
+        for event in events:
+            event_dict = _calendar_event_to_dict(event)
+            # Add status relative to current time
+            # Handle both datetime objects and ISO string formats from Supabase
+            start_time = event.start_time if hasattr(event.start_time, "strftime") else datetime.fromisoformat(event.start_time.replace('Z', '+00:00'))
+            end_time = event.end_time if not event.end_time or hasattr(event.end_time, "strftime") else datetime.fromisoformat(event.end_time.replace('Z', '+00:00'))
+
+            # Convert to Eastern Time for comparison
+            start_time_eastern = start_time.astimezone(EASTERN_TZ)
+            end_time_eastern = end_time.astimezone(EASTERN_TZ) if end_time else None
+
+            if start_time_eastern <= current_time:
+                if end_time_eastern and end_time_eastern >= current_time:
+                    event_dict["status"] = "HAPPENING NOW"
+                else:
+                    event_dict["status"] = "Already happened"
+            else:
+                event_dict["status"] = "Upcoming"
+            events_data.append(event_dict)
+
+        result_data = {
+            "current_time": current_time.strftime("%I:%M %p") + " EST",
+            "current_date": current_time.strftime("%A, %B %d, %Y"),
+            "events": events_data
+        }
+        result = json.dumps(result_data, indent=2)
+
+    await params.result_callback(result)
+
+
 def _person_to_dict(person: Person) -> dict:
     # Handle both enum and string values for relationship
     relationship = person.relationship
@@ -143,3 +203,46 @@ def _patient_to_dict(patient: Patient) -> dict:
         "preferred_language": patient.preferred_language,
         "notes": patient.notes,
     }
+
+
+def _calendar_event_to_dict(event: CalendarEvent) -> dict:
+    # Handle event_type - similar to relationship enum handling
+    event_type = event.event_type
+    if hasattr(event_type, "value"):
+        event_type = event_type.value
+
+    # Format start and end times for readability in Eastern Time
+    # Handle both datetime objects and ISO string formats from Supabase
+    if hasattr(event.start_time, "strftime"):
+        start_time_eastern = event.start_time.astimezone(EASTERN_TZ)
+        start_time = start_time_eastern.strftime("%I:%M %p") + " EST"
+    else:
+        start_time_dt = datetime.fromisoformat(event.start_time.replace('Z', '+00:00'))
+        start_time_eastern = start_time_dt.astimezone(EASTERN_TZ)
+        start_time = start_time_eastern.strftime("%I:%M %p") + " EST"
+
+    if event.end_time:
+        if hasattr(event.end_time, "strftime"):
+            end_time_eastern = event.end_time.astimezone(EASTERN_TZ)
+            end_time = end_time_eastern.strftime("%I:%M %p") + " EST"
+        else:
+            end_time_dt = datetime.fromisoformat(event.end_time.replace('Z', '+00:00'))
+            end_time_eastern = end_time_dt.astimezone(EASTERN_TZ)
+            end_time = end_time_eastern.strftime("%I:%M %p") + " EST"
+    else:
+        end_time = None
+
+    event_dict = {
+        "title": event.title,
+        "description": event.description,
+        "event_type": str(event_type),
+        "start_time": start_time,
+        "end_time": end_time,
+        "all_day": event.all_day,
+        "location": event.location,
+        "completed": event.completed,
+        "notes": event.notes,
+    }
+
+    # Remove None values for cleaner output
+    return {k: v for k, v in event_dict.items() if v is not None}

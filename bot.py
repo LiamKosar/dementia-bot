@@ -26,6 +26,7 @@ from prompts import get_personalized_prompt
 from queries import get_patient
 from tools.person_tools import (
     build_person_tools,
+    handle_get_today_events,
     handle_lookup_person,
     handle_show_patient,
 )
@@ -75,6 +76,7 @@ async def run_bot(room_url: str, token: str, user_id: UUID):
 
     llm.register_function("lookup_person", handle_lookup_person)
     llm.register_function("show_patient", handle_show_patient)
+    llm.register_function("get_today_events", handle_get_today_events)
 
     person_tools = await person_tools
 
